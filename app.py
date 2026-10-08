@@ -6,9 +6,9 @@ import streamlit as st
 from survey_core import (AnalysisError, correlation, descriptives, frequencies,
                          missing_codes, profile, quality, read_survey, to_excel)
 
-st.set_page_config(page_title='설문 분석 스튜디오', layout='wide')
-st.title('설문 분석 스튜디오')
-st.caption('SPSS 없이 설문 원자료를 분석합니다. 로컬 실행용 MVP입니다.')
+st.set_page_config(page_title='StatFlow', layout='wide')
+st.title('StatFlow')
+st.caption('설문 원자료를 점검하고 통계 분석 결과를 탐색하는 연구 데이터 분석 도구입니다.')
 st.warning('민감한 설문 자료는 공개 서버에 업로드하지 마세요. 개인 PC에서 실행하는 것을 권장합니다.')
 upload = st.file_uploader('원자료 업로드 (CSV/XLSX, 첫 행: 변수명)', type=['csv', 'xlsx'])
 if upload is None:
