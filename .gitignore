@@ -1,11 +1,7 @@
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .venv/
+venv/
 .env
-*.py[cod]
-*.xlsx
-*.xls
-*.sav
-*.csv
-!sample_data/*.csv
-.streamlit/secrets.toml
+.DS_Store

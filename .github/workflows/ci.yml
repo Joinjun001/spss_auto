@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -10,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - run: python -m pip install -r requirements.txt
-      - run: python -m compileall -q app.py survey_core.py
+      - run: python -m compileall -q app.py statflow tests
       - run: python -m pytest -q

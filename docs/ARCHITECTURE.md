@@ -1,13 +1,40 @@
 # 아키텍처
 
-StatFlow는 UI와 통계 계산 계층을 분리해 통계 기능을 독립적으로 검증할 수 있도록 구성합니다.
+StatFlow의 중심은 통계 기능의 개수가 아니라 **Planning → Validation → Execution → Reporting** 경계를 명확히 하는 것입니다.
 
-- `app.py`: Streamlit 기반 업로드·변수 검토·분석 선택·결과 출력 UI
-- `survey_core.py`: 파일 파싱, 품질 검사, 통계 계산, Excel 결과 직렬화
-- `tests/`: 알려진 통계값과 엣지케이스를 검증하는 단위 테스트
-- `sample_data/`: 합성 예시 설문 응답
-- `docs/`: 제품 구조와 개발 로드맵
+```text
+app.py
+  │
+  ├─ statflow/data.py        원자료 읽기·프로파일링
+  ├─ statflow/planner.py     연구 질문 → AnalysisPlan
+  ├─ statflow/validation.py  실행 전 조건 검증
+  ├─ statflow/engine.py      SciPy/statsmodels 실제 계산
+  └─ statflow/report.py      계산 결과 기반 설명
+              │
+              └─ statflow/schema.py  공통 도메인 모델
+```
 
-원자료는 애플리케이션이 별도 파일로 저장하지 않도록 설계했지만 Streamlit 세션 메모리에 보관될 수 있습니다. 공개 배포 전 업로드 제한, 세션 격리, 인증, 로그·캐시 정책, 개인정보보호 검토가 필요합니다.
+## Planner 경계
 
-통계 계산은 UI 코드와 분리하며, 가능한 경우 SciPy 등 신뢰 가능한 구현이나 알려진 기준값과 결과를 대조합니다. 새로운 분석 기법도 같은 방식으로 핵심 계산 로직과 UI를 분리해 추가합니다.
+현재 `planner.py`는 API 키 없이 작동하는 규칙 기반 구현입니다. 이후 LLM provider를 붙일 때도 외부 모델의 출력은 `AnalysisPlan` 구조로 제한합니다.
+
+LLM이 담당할 수 있는 영역:
+- 연구 질문에서 변수 역할 후보 추론
+- 분석 방법 후보와 근거 제시
+- 필요한 가정과 추가 질문 제안
+
+LLM이 직접 담당하지 않는 영역:
+- p-value, 신뢰구간, 회귀계수 등 통계 수치 생성
+- 검증 실패를 무시한 분석 실행
+- 관찰자료에서 근거 없는 인과 결론 생성
+
+## 실행 계층
+
+통계 수치는 SciPy와 statsmodels에서 계산합니다. 새 분석 방법을 추가할 때는 다음 순서를 지킵니다.
+
+1. `AnalysisMethod`에 방법 등록
+2. planner가 해당 방법을 제안할 수 있도록 규칙/LLM schema 확장
+3. validation에 최소 실행 조건 추가
+4. engine에 검증된 구현 추가
+5. 알려진 값 또는 신뢰 가능한 라이브러리와 대조하는 테스트 추가
+6. report에 계산된 값만 사용하는 결과 설명 추가

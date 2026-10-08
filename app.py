@@ -1,133 +1,155 @@
-"""StatFlow: 설문 원자료를 메모리에서 점검하고 분석하는 Streamlit 앱."""
+"""StatFlow Streamlit UI: 연구 질문을 검증 가능한 분석 workflow로 변환한다."""
 from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from survey_core import (AnalysisError, correlation, descriptives, frequencies,
-                         missing_codes, profile, quality, read_survey, to_excel)
+
+from statflow.data import DataError, level_map, profile_dataset, quality_messages, read_dataset
+from statflow.engine import EngineError, run_analysis
+from statflow.planner import recommend_plan
+from statflow.report import summarize
+from statflow.schema import AnalysisMethod, AnalysisPlan, METHOD_ASSUMPTIONS, METHOD_LABELS
+from statflow.validation import has_failures, validate_plan
 
 SAMPLE_PATH = Path(__file__).parent / 'sample_data' / 'example_survey.csv'
+METHODS = list(AnalysisMethod)
 
 st.set_page_config(page_title='StatFlow', layout='wide')
 st.title('StatFlow')
-st.caption('설문 원자료를 점검하고 통계 분석 결과를 탐색하는 연구 데이터 분석 도구입니다.')
-st.warning('민감한 설문 자료는 공개 서버에 업로드하지 마세요. 개인 PC에서 실행하는 것을 권장합니다.')
+st.caption('연구 질문을 통계 분석 계획으로 바꾸고, 데이터 조건을 검증한 뒤 실제 통계 엔진으로 실행합니다.')
 
-st.subheader('0. 데이터 선택')
-source = st.radio(
-    '어떻게 시작할까요?',
-    ['예시 데이터로 시작', '내 파일 업로드'],
-    horizontal=True,
-)
+with st.sidebar:
+    st.markdown('### 원칙')
+    st.markdown('- AI/Planner는 **분석 계획만 제안**합니다.\n- 통계 수치는 SciPy/statsmodels가 계산합니다.\n- 추천은 강제가 아니며 사용자가 수정할 수 있습니다.\n- 결과는 연구 설계와 함께 해석해야 합니다.')
+
+st.subheader('1. 연구 질문과 데이터')
+question = st.text_area('연구 질문', value='학습시간이 스트레스점수에 영향을 미치는가?', height=90)
+source = st.radio('데이터', ['예시 데이터', '내 파일 업로드'], horizontal=True)
 
 try:
-    sheet = 0
-    if source == '예시 데이터로 시작':
-        sample_bytes = SAMPLE_PATH.read_bytes()
-        frame = read_survey(sample_bytes, SAMPLE_PATH.name)
-        st.success('합성 설문 예시 데이터 40명을 불러왔습니다. 실제 개인정보는 포함되어 있지 않습니다.')
-        st.download_button(
-            '예시 CSV 다운로드',
-            sample_bytes,
-            file_name='statflow_example_survey.csv',
-            mime='text/csv',
-        )
+    if source == '예시 데이터':
+        raw = SAMPLE_PATH.read_bytes()
+        frame = read_dataset(raw, SAMPLE_PATH.name)
+        st.caption('합성 설문 40명: 실제 개인정보를 포함하지 않습니다.')
     else:
-        upload = st.file_uploader('원자료 업로드 (CSV/XLSX, 첫 행: 변수명)', type=['csv', 'xlsx'])
+        upload = st.file_uploader('CSV/XLSX 업로드', type=['csv', 'xlsx'])
         if upload is None:
-            st.info('CSV 또는 XLSX 파일을 선택하면 분석을 시작합니다.')
+            st.info('파일을 업로드하면 분석 계획을 만들 수 있습니다.')
             st.stop()
+        sheet = 0
         if upload.name.lower().endswith('.xlsx'):
             sheets = pd.ExcelFile(BytesIO(upload.getvalue()), engine='openpyxl').sheet_names
             sheet = st.selectbox('시트', sheets)
-        frame = read_survey(upload.getvalue(), upload.name, sheet)
-
-    tokens = st.text_input('결측 코드 (쉼표로 구분, 자동 삭제하지 않음)', placeholder='예: -99, 999')
-    frame = missing_codes(frame, tokens.split(','))
-except (AnalysisError, ValueError, OSError) as exc:
+        frame = read_dataset(upload.getvalue(), upload.name, sheet)
+except (DataError, OSError, ValueError) as exc:
     st.error(str(exc))
     st.stop()
 
-st.subheader('1. 데이터 품질')
-st.caption(f'{len(frame):,}행 × {len(frame.columns):,}열')
-warnings = quality(frame)
-if warnings:
-    for warning in warnings:
-        st.warning(warning)
+cols = [str(c) for c in frame.columns]
+levels = level_map(frame)
+numeric = [c for c in cols if levels[c] in {'연속형', '서열형'}]
+categorical = [c for c in cols if levels[c] == '명목형']
+
+if not numeric:
+    st.error('분석 가능한 수치형 변수를 찾지 못했습니다. 데이터와 변수 코딩을 확인하세요.')
+    st.stop()
+
+for message in quality_messages(frame):
+    st.warning(message)
+with st.expander('데이터/변수 프로파일', expanded=False):
+    st.dataframe(profile_dataset(frame), hide_index=True, use_container_width=True)
+    st.dataframe(frame.head(20), use_container_width=True)
+
+st.subheader('2. 분석 계획')
+proposal = recommend_plan(question, frame)
+method_index = METHODS.index(proposal.method)
+method = st.selectbox('추천 분석 방법', METHODS, index=method_index, format_func=lambda m: METHOD_LABELS[m])
+
+if proposal.confidence == 'low':
+    st.warning('질문에서 변수와 분석 의도를 충분히 확정하지 못했습니다. 아래 변수 역할을 직접 확인하세요.')
 else:
-    st.success('기본 품질 점검에서 즉시 확인할 경고가 없습니다.')
-with st.expander('원자료 미리보기 (30행)', expanded=(source == '예시 데이터로 시작')):
-    st.dataframe(frame.head(30), use_container_width=True)
+    st.info('추천 근거: ' + ' '.join(proposal.rationale))
 
-st.subheader('2. 변수·코딩 검토')
-st.caption('측정 수준은 추정입니다. 코드북을 확인하고 직접 수정하세요.')
-variables = st.data_editor(
-    profile(frame),
-    hide_index=True,
-    use_container_width=True,
-    disabled=['변수', '유효 N', '결측 N', '고유값', '검토'],
-    column_config={
-        '측정 수준': st.column_config.SelectboxColumn(
-            '측정 수준',
-            options=['명목형', '서열형', '연속형', 'ID', '검토 필요'],
-            required=True,
-        )
-    },
+outcome = None
+group = None
+predictors: tuple[str, ...] = ()
+
+if method == AnalysisMethod.PEARSON:
+    if len(numeric) < 2:
+        st.error('상관분석에는 서로 다른 수치형 변수 두 개가 필요합니다.')
+        st.stop()
+    defaults = list(proposal.predictors[:2]) if len(proposal.predictors) >= 2 else numeric[:2]
+    x = st.selectbox('변수 X', numeric, index=numeric.index(defaults[0]) if defaults and defaults[0] in numeric else 0)
+    y_candidates = [c for c in numeric if c != x]
+    y_default = defaults[1] if len(defaults) > 1 and defaults[1] in y_candidates else y_candidates[0]
+    y = st.selectbox('변수 Y', y_candidates, index=y_candidates.index(y_default))
+    predictors = (x, y)
+elif method == AnalysisMethod.LINEAR_REGRESSION:
+    if len(numeric) < 2:
+        st.error('회귀분석에는 종속변수와 독립변수로 사용할 수치형 변수가 두 개 이상 필요합니다.')
+        st.stop()
+    outcome_default = proposal.outcome if proposal.outcome in numeric else (numeric[1] if len(numeric) > 1 else numeric[0])
+    outcome = st.selectbox('종속변수', numeric, index=numeric.index(outcome_default))
+    predictor_options = [c for c in numeric if c != outcome]
+    defaults = [p for p in proposal.predictors if p in predictor_options] or predictor_options[:1]
+    predictors = tuple(st.multiselect('독립변수', predictor_options, default=defaults))
+else:
+    outcome_default = proposal.outcome if proposal.outcome in numeric else numeric[0]
+    outcome = st.selectbox('종속변수', numeric, index=numeric.index(outcome_default))
+    group_candidates = [c for c in categorical if c != outcome]
+    if not group_candidates:
+        st.error('명목형 집단변수가 없습니다. 변수 측정수준 추론을 확인하세요.')
+        st.stop()
+    group_default = proposal.group if proposal.group in group_candidates else group_candidates[0]
+    group = st.selectbox('집단변수', group_candidates, index=group_candidates.index(group_default))
+
+plan = AnalysisPlan(
+    method=method,
+    research_question=question,
+    outcome=outcome,
+    predictors=predictors,
+    group=group,
+    rationale=proposal.rationale if method == proposal.method else ('사용자가 추천 분석을 수정했습니다.',),
+    assumptions=tuple(METHOD_ASSUMPTIONS[method]),
+    confidence=proposal.confidence if method == proposal.method else 'user-confirmed',
 )
-measures = dict(zip(variables['변수'], variables['측정 수준']))
-numeric = [c for c in frame if measures[str(c)] in {'서열형', '연속형'}]
-categories = [c for c in frame if measures[str(c)] in {'명목형', '서열형'}]
 
-st.subheader('3. 분석')
-tables = {'변수검토': variables}
-t1, t2, t3 = st.tabs(['기술통계', '빈도분석', '상관분석'])
-with t1:
-    default_descriptive = [c for c in ['age', 'study_hours', 'stress_score'] if c in numeric]
-    if not default_descriptive:
-        default_descriptive = numeric[:5]
-    chosen = st.multiselect('분석 변수', numeric, default=default_descriptive)
+with st.expander('필요한 가정', expanded=True):
+    for assumption in plan.assumptions:
+        st.markdown(f'- {assumption}')
+
+st.subheader('3. 실행 전 검증')
+checks = validate_plan(frame, plan)
+icons = {'pass': '✅', 'warning': '⚠️', 'fail': '❌'}
+for check in checks:
+    st.write(f"{icons[check.status]} **{check.name}** — {check.message}")
+
+st.subheader('4. 분석 실행')
+if has_failures(checks):
+    st.error('실패한 검증 항목이 있어 분석을 실행하지 않습니다. 변수 역할이나 데이터를 수정하세요.')
+else:
     try:
-        table = descriptives(frame, chosen)
-        st.dataframe(table, hide_index=True, use_container_width=True)
-        tables['기술통계'] = table
-        st.caption('표본 표준편차(ddof=1). 서열형 응답의 평균 해석에는 주의하세요.')
-    except AnalysisError as exc:
-        st.error(str(exc))
-with t2:
-    default_category = 'region' if 'region' in categories else ''
-    options = [''] + categories
-    selected = st.selectbox('범주 변수', options, index=options.index(default_category) if default_category else 0)
-    if selected:
-        table = frequencies(frame, selected)
-        st.dataframe(table, hide_index=True, use_container_width=True)
-        st.bar_chart(table[table['값'] != '(결측)'].set_index('값')['빈도'])
-        tables['빈도분석'] = table
-with t3:
-    method = st.radio('방법', ['pearson', 'spearman'], horizontal=True)
-    eligible = [c for c in frame if measures[str(c)] == '연속형'] if method == 'pearson' else numeric
-    if len(eligible) < 2:
-        st.info('분석 가능한 서로 다른 변수가 두 개 이상 필요합니다.')
-    else:
-        preferred_x = 'study_hours' if 'study_hours' in eligible else eligible[0]
-        preferred_y = 'stress_score' if 'stress_score' in eligible and 'stress_score' != preferred_x else eligible[1]
-        x = st.selectbox('X 변수', eligible, index=eligible.index(preferred_x))
-        y = st.selectbox('Y 변수', eligible, index=eligible.index(preferred_y))
-        try:
-            table = correlation(frame, x, y, method)
-            st.dataframe(table, hide_index=True, use_container_width=True)
-            tables['상관분석'] = table
-            if method == 'pearson':
-                st.scatter_chart(frame[[x, y]].apply(pd.to_numeric, errors='coerce').dropna(), x=x, y=y)
-            st.caption('결측 쌍 제외. Pearson CI는 Fisher z 근사, Spearman p는 근사값(N<10 미제공). 상관은 인과가 아닙니다.')
-        except AnalysisError as exc:
-            st.error(str(exc))
+        result = run_analysis(frame, plan)
+    except (EngineError, ValueError, KeyError) as exc:
+        st.error(f'분석 실행 실패: {exc}')
+        st.stop()
 
-st.subheader('4. 결과 내보내기')
-st.download_button(
-    'Excel 결과 다운로드',
-    to_excel(tables),
-    file_name='statflow_results.xlsx',
-    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-)
-st.caption('결과 파일에는 원자료가 포함되지 않습니다. 앱은 업로드 데이터를 별도 디스크에 저장하지 않습니다.')
+    for name, table in result.tables.items():
+        if isinstance(table, pd.DataFrame) and not table.empty:
+            st.markdown(f'**{name}**')
+            st.dataframe(table, hide_index=True, use_container_width=True)
+
+    if result.diagnostics:
+        st.markdown('**실행 후 진단**')
+        for diagnostic in result.diagnostics:
+            st.write(f"{icons[diagnostic.status]} **{diagnostic.name}** — {diagnostic.message}")
+
+    st.markdown('**결과 해석**')
+    for line in summarize(plan, result):
+        st.write(line)
+
+    with st.expander('계산된 원시 지표'):
+        st.json(result.metrics)
+
+st.caption('현재 MVP의 planner는 API 키 없이 동작하는 설명 가능한 규칙 기반 구현입니다. 향후 LLM은 동일한 AnalysisPlan 스키마를 반환하도록 연결합니다.')
