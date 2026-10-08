@@ -2,46 +2,22 @@
 import numpy as np
 import pandas as pd
 import re
+from spss_table_utils import prepare_spss_dataframe, extract_spss_tables, replace_missing_stats
 
 # 파일 경로 설정
 파일경로 = "차이검정.xlsx"
 df = pd.read_excel(파일경로, header=None)
 
 # 숫자형 데이터를 소수점 2자리까지 변환, 0도 유지
-df = df.map(lambda x: f"{x:.2f}" if isinstance(x, (float, int)) else x)
-
-# 결측치(nan) 처리 (0은 건드리지 않도록 함)
-df = df.replace({"nan": np.nan, "NaN": np.nan, np.nan: ""})
+df = prepare_spss_dataframe(df)
 
 #%% 2. 테이블 추출
-# 찾을 키워드 목록
-keywords = ["집단통계량", "독립표본 검정", "기술통계", "ANOVA", "Scheffe"]  # Scheffe만 추가
+# 빈 행 및 다음 표 제목을 기준으로 각 분석표를 분리한다.
+keywords = ["집단통계량", "독립표본 검정", "기술통계", "ANOVA", "Scheffe"]
+table_dict = extract_spss_tables(df, keywords)
 
-# 결과 저장을 위한 딕셔너리
-table_dict = {keyword: [] for keyword in keywords}
-
-# 키워드별로 표를 자동으로 추출하여 저장
-for keyword in keywords:
-    start_indices = df[df.iloc[:, 0].astype(str).str.contains(keyword, na=False)].index.tolist()
-    
-    for start_idx in start_indices:
-        end_idx = start_idx + 1 
-        
-        # Scheffe 결과 테이블의 끝 찾기
-        if keyword == "Scheffe":
-            for idx in range(start_idx + 1, len(df)):
-                if "CTT 유의확률" in str(df.iloc[idx, 0]):
-                    end_idx = idx + 1
-                    break
-        else:
-            # 기존 방식대로 빈 행 찾기
-            for idx in range(start_idx + 1, len(df)):
-                if df.iloc[idx].isnull().all():
-                    end_idx = idx
-                    break
-
-        table = df.iloc[start_idx:end_idx].dropna(how="all").reset_index(drop=True)
-        table_dict[keyword].append(table)
+if not table_dict["집단통계량"]:
+    raise ValueError("집단통계량 표를 찾지 못했습니다. SPSS 내보내기 형식을 확인하세요.")
 
 # 사후검정 결과 저장을 위한 딕셔너리
 사후검정_결과 = {}
@@ -159,7 +135,7 @@ def get_group_labels(category, variable):
     return category
 
 # 종속변수별 빈 리스트 생성 (각 카테고리마다 기본값 설정)
-종속변수딕셔너리 = {변수: ["0.00±0.00"] * len(카테고리_리스트) for 변수 in 종속변수리스트}
+종속변수딕셔너리 = {변수: ["—"] * len(카테고리_리스트) for 변수 in 종속변수리스트}
 
 # 집단통계량(독립검정)에서 값 추가
 for index, 집단통계량 in enumerate(집단통계량리스트):
@@ -251,16 +227,8 @@ for anova in ANOVA리스트:
         except (ValueError, TypeError):
             continue
 
-# 사후검정 결과 추가
-for key in 검정통계량딕셔너리.keys():
-    if key in 사후검정_결과:
-        # 사후검정 결과가 있는 경우 괄호 안에 추가
-        post_hoc_pairs = []
-        for group in 사후검정_결과[key]['groups']:
-            if group['subset1'] is not None and group['subset2'] is not None:
-                post_hoc_pairs.append(f"a<c")  # 실제 비교 결과에 따라 수정 필요
-        if post_hoc_pairs:
-            검정통계량딕셔너리[key] += f" ({','.join(post_hoc_pairs)})"
+# Scheffe 부분집합 정보만으로 유의한 집단 간 대소관계를 확정할 수 없으므로
+# 검증되지 않은 사후검정 비교 문구(a<c 등)는 자동 생성하지 않는다.
 
 #%% 6. 데이터프레임 생성 및 포맷팅
 # 새 데이터프레임 생성
@@ -305,13 +273,8 @@ df_expanded.columns = pd.MultiIndex.from_arrays([
 df_expanded = df_expanded.iloc[2:].reset_index(drop=True)
 
 #%% 7. 결측치 처리 및 저장
-# "nan"을 "0.00"으로 변경
-df_expanded = df_expanded.replace("nan", "0.00")
-df_expanded = df_expanded.replace("nan±nan", "0.00±0.00")
-
-# "±nan" 또는 "±NaN"이 포함된 값을 "±0.00"으로 변경
-df_expanded = df_expanded.replace(to_replace=r"±\s*nan", value="±0.00", regex=True)
-df_expanded = df_expanded.replace(to_replace=r"±\s*NaN", value="±0.00", regex=True)
+# 결측치를 실제 측정값 0으로 표시하지 않는다.
+df_expanded = replace_missing_stats(df_expanded)
 
 # 엑셀 저장 (MultiIndex 컬럼 처리)
 with pd.ExcelWriter(f'F_차이검정_{파일경로}', engine='openpyxl') as writer:
