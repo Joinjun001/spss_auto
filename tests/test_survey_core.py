@@ -79,3 +79,15 @@ def test_excel_formula_injection():
     sheet = load_workbook(BytesIO(data))['빈도표']
     assert sheet['A2'].data_type != 'f'
     assert sheet['A2'].value == "'=1+1"
+
+
+def test_bundled_sample_dataset_is_valid():
+    from pathlib import Path
+
+    path = Path('sample_data/example_survey.csv')
+    frame = read_survey(path.read_bytes(), path.name)
+    assert len(frame) == 40
+    assert {'respondent_id', 'study_hours', 'stress_score', 'satisfaction_1'}.issubset(frame.columns)
+    assert profile(frame).set_index('변수').loc['respondent_id', '측정 수준'] == 'ID'
+    result = correlation(frame, 'study_hours', 'stress_score', 'pearson').iloc[0]
+    assert result['유효 쌍 N'] == 40
