@@ -34,8 +34,9 @@ SciPy / statsmodels 실행
 - 효과크기와 95% 신뢰구간 등 재현 가능한 결과 제공
 - 실제 통계값만 사용한 보수적 결과 설명
 - 합성 예시 데이터로 즉시 체험
+- provider 독립적인 LLM structured-output adapter와 schema/변수 역할 검증
 
-현재 planner는 API 키 없이 동작하는 규칙 기반 구현입니다. 이는 최종 제품이 아니라 **LLM을 연결하기 전에 분석 schema와 안전 경계를 먼저 고정하기 위한 MVP**입니다. 향후 LLM도 자유롭게 수치를 생성하지 않고 동일한 `AnalysisPlan` 구조만 반환하게 합니다.
+현재 UI의 기본 planner는 API 키 없이 동작하는 규칙 기반 fallback입니다. 별도의 LLM provider를 연결할 때는 `statflow/llm_planner.py`의 계약을 사용하며, 외부 모델은 `AnalysisPlan` 후보만 반환할 수 있습니다. p-value·회귀계수 같은 통계 수치나 허용되지 않은 추가 필드는 schema 단계에서 거부하고, 데이터에 없는 변수와 분석 방법별 잘못된 역할도 실행 전에 차단합니다. 원자료 행은 planner payload에 포함하지 않고 변수 메타데이터만 전달합니다.
 
 ## 실행
 

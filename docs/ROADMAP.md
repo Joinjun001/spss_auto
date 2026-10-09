@@ -11,11 +11,11 @@
 
 ## Phase 2 — LLM planner 연결
 
-- provider 독립적인 structured-output adapter
+- [x] provider 독립적인 structured-output adapter와 schema/semantic validation
 - 변수명/코드북/연구가설을 함께 전달
 - 복수 분석 후보와 추천 점수
 - 불확실할 때 사용자에게 필요한 추가 질문 생성
-- planner 출력 schema validation 및 허용 분석 registry
+- [x] planner 출력 schema validation 및 허용 분석 registry 경계
 
 ## Phase 3 — 연구 설계 검증 강화
 

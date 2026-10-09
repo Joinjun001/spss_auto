@@ -6,7 +6,8 @@ StatFlow의 중심은 통계 기능의 개수가 아니라 **Planning → Valida
 app.py
   │
   ├─ statflow/data.py        원자료 읽기·프로파일링
-  ├─ statflow/planner.py     연구 질문 → AnalysisPlan
+  ├─ statflow/planner.py     규칙 기반 fallback planner
+  ├─ statflow/llm_planner.py LLM structured-output 신뢰 경계
   ├─ statflow/validation.py  실행 전 조건 검증
   ├─ statflow/engine.py      SciPy/statsmodels 실제 계산
   └─ statflow/report.py      계산 결과 기반 설명
@@ -16,7 +17,7 @@ app.py
 
 ## Planner 경계
 
-현재 `planner.py`는 API 키 없이 작동하는 규칙 기반 구현입니다. 이후 LLM provider를 붙일 때도 외부 모델의 출력은 `AnalysisPlan` 구조로 제한합니다.
+현재 `planner.py`는 API 키 없이 작동하는 규칙 기반 fallback이고, `llm_planner.py`는 특정 SDK에 종속되지 않는 `StructuredOutputProvider` 계약을 제공합니다. 외부 모델 출력은 Pydantic JSON schema로 검증하며 추가 필드를 금지하고, 데이터에 존재하는 변수만 허용하며, 분석 방법별 변수 역할까지 다시 검증한 뒤 `AnalysisPlan`으로 변환합니다. 외부 provider에는 원자료 행이 아니라 변수명·측정수준·유효/결측 N·고유값 수 같은 메타데이터만 기본 전달합니다.
 
 LLM이 담당할 수 있는 영역:
 - 연구 질문에서 변수 역할 후보 추론
